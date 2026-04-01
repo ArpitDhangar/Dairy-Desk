@@ -1,0 +1,584 @@
+import { useEffect, useState } from "react";
+import API from "../services/api";
+import { formatCurrency } from "../utils/formatters";
+
+const initialProductForm = {
+  name: "",
+  unit: "liter",
+  stock: 0,
+  sellingPrice: "",
+};
+
+const initialPurchaseForm = {
+  product: "",
+  quantity: "",
+  cost: "",
+  amountPaid: "",
+  supplierName: "",
+  notes: "",
+};
+
+function Products() {
+  const [products, setProducts] = useState([]);
+  const [purchases, setPurchases] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [submittingProduct, setSubmittingProduct] = useState(false);
+  const [submittingPurchase, setSubmittingPurchase] = useState(false);
+  const [savingProductId, setSavingProductId] = useState("");
+  const [deletingProductId, setDeletingProductId] = useState("");
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [productForm, setProductForm] = useState(initialProductForm);
+  const [purchaseForm, setPurchaseForm] = useState(initialPurchaseForm);
+  const [editingProductId, setEditingProductId] = useState("");
+  const [editForm, setEditForm] = useState({
+    name: "",
+    sellingPrice: "",
+  });
+
+  const fetchProducts = async () => {
+    try {
+      setLoading(true);
+      setError("");
+      const [productsRes, purchasesRes] = await Promise.all([
+        API.get("/products"),
+        API.get("/products/purchases"),
+      ]);
+      setProducts(productsRes.data);
+      setPurchases(purchasesRes.data);
+      setPurchaseForm((current) => ({
+        ...current,
+        product: current.product || productsRes.data[0]?._id || "",
+      }));
+    } catch (err) {
+      setError("Could not load products right now.");
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchProducts();
+  }, []);
+
+  const handleAddProduct = async (e) => {
+    e.preventDefault();
+
+    try {
+      setSubmittingProduct(true);
+      setError("");
+      setNotice("");
+      await API.post("/products", {
+        ...productForm,
+        stock: Number(productForm.stock) || 0,
+        sellingPrice: Number(productForm.sellingPrice) || 0,
+      });
+      setProductForm(initialProductForm);
+      setNotice("Product added successfully.");
+      fetchProducts();
+    } catch (err) {
+      setError("Product could not be added.");
+      console.error(err);
+    } finally {
+      setSubmittingProduct(false);
+    }
+  };
+
+  const handleAddPurchase = async (e) => {
+    e.preventDefault();
+
+    if (!purchaseForm.product) {
+      setError("Choose a product before saving stock.");
+      return;
+    }
+
+    try {
+      setSubmittingPurchase(true);
+      setError("");
+      setNotice("");
+      await API.post("/products/purchase", {
+        product: purchaseForm.product,
+        quantity: Number(purchaseForm.quantity) || 0,
+        cost: Number(purchaseForm.cost) || 0,
+        amountPaid: Number(purchaseForm.amountPaid) || 0,
+        supplierName: purchaseForm.supplierName,
+        notes: purchaseForm.notes,
+      });
+      setPurchaseForm((current) => ({
+        ...initialPurchaseForm,
+        product: current.product,
+      }));
+      setNotice("Stock purchase saved successfully.");
+      fetchProducts();
+    } catch (err) {
+      setError("Stock purchase could not be saved.");
+      console.error(err);
+    } finally {
+      setSubmittingPurchase(false);
+    }
+  };
+
+  const startEditingProduct = (product) => {
+    setEditingProductId(product._id);
+    setEditForm({
+      name: product.name || "",
+      sellingPrice: String(product.sellingPrice ?? ""),
+    });
+  };
+
+  const handleUpdateProduct = async (productId) => {
+    try {
+      setSavingProductId(productId);
+      setError("");
+      setNotice("");
+      await API.put(`/products/${productId}`, {
+        name: editForm.name,
+        sellingPrice: Number(editForm.sellingPrice) || 0,
+      });
+      setEditingProductId("");
+      setNotice("Product updated successfully.");
+      fetchProducts();
+    } catch (err) {
+      setError(err?.response?.data?.message || "Product could not be updated.");
+      console.error(err);
+    } finally {
+      setSavingProductId("");
+    }
+  };
+
+  const handleDeleteProduct = async (productId) => {
+    try {
+      setDeletingProductId(productId);
+      setError("");
+      setNotice("");
+      await API.delete(`/products/${productId}`);
+      if (editingProductId === productId) {
+        setEditingProductId("");
+      }
+      setNotice("Product deleted successfully.");
+      fetchProducts();
+    } catch (err) {
+      setError(err?.response?.data?.message || "Product could not be deleted.");
+      console.error(err);
+    } finally {
+      setDeletingProductId("");
+    }
+  };
+
+  const lowStockProducts = products.filter((product) => Number(product.stock) <= 5);
+  const totalStock = products.reduce(
+    (sum, product) => sum + (Number(product.stock) || 0),
+    0
+  );
+  const totalPurchaseDue = purchases.reduce(
+    (sum, purchase) => sum + (Number(purchase.pendingAmount) || 0),
+    0
+  );
+  const unpaidPurchases = purchases.filter(
+    (purchase) => Number(purchase.pendingAmount) > 0
+  );
+
+  return (
+    <div className="page-stack">
+      <section className="hero-card">
+        <div>
+          <p className="eyebrow">Inventory</p>
+          <h2>Inventory</h2>
+        </div>
+
+        <div className="hero-metrics">
+          <div className="metric-card accent-blue">
+            <span>Total products</span>
+            <strong>{products.length}</strong>
+          </div>
+          <div className="metric-card accent-green">
+            <span>Total stock units</span>
+            <strong>{totalStock}</strong>
+          </div>
+          <div className="metric-card accent-amber">
+            <span>Supplier due</span>
+            <strong>{formatCurrency(totalPurchaseDue)}</strong>
+          </div>
+        </div>
+      </section>
+
+      {error ? <p className="feedback error">{error}</p> : null}
+      {notice ? <p className="feedback success">{notice}</p> : null}
+
+      <section className="content-grid">
+        <article className="panel-card">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Catalog</p>
+              <h3>Add a product</h3>
+            </div>
+            <span className="pill">Owner setup</span>
+          </div>
+
+          <form className="form-grid" onSubmit={handleAddProduct}>
+            <label className="field">
+              <span>Product name</span>
+              <input
+                placeholder="Curd"
+                value={productForm.name}
+                onChange={(e) =>
+                  setProductForm({ ...productForm, name: e.target.value })
+                }
+                required
+              />
+            </label>
+
+            <label className="field">
+              <span>Unit</span>
+              <select
+                value={productForm.unit}
+                onChange={(e) =>
+                  setProductForm({ ...productForm, unit: e.target.value })
+                }
+              >
+                <option value="liter">Liter</option>
+                <option value="kg">Kilogram</option>
+                <option value="packet">Packet</option>
+                <option value="piece">Piece</option>
+              </select>
+            </label>
+
+            <label className="field">
+              <span>Selling price</span>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={productForm.sellingPrice}
+                onChange={(e) =>
+                  setProductForm({
+                    ...productForm,
+                    sellingPrice: e.target.value,
+                  })
+                }
+                placeholder="0"
+                required
+              />
+            </label>
+
+            <label className="field">
+              <span>Opening stock</span>
+              <input
+                type="number"
+                min="0"
+                step="0.5"
+                value={productForm.stock}
+                onChange={(e) =>
+                  setProductForm({
+                    ...productForm,
+                    stock: Number(e.target.value),
+                  })
+                }
+              />
+            </label>
+
+            <button
+              className="primary-button field-full"
+              type="submit"
+              disabled={submittingProduct}
+            >
+              {submittingProduct ? "Saving..." : "Add product"}
+            </button>
+          </form>
+        </article>
+
+        <article className="panel-card">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Purchases</p>
+              <h3>Update stock after buying</h3>
+            </div>
+            <span className="pill pill-green">Stock inflow</span>
+          </div>
+
+          <form className="form-grid" onSubmit={handleAddPurchase}>
+            <label className="field field-full">
+              <span>Product</span>
+              <select
+                value={purchaseForm.product}
+                onChange={(e) =>
+                  setPurchaseForm({ ...purchaseForm, product: e.target.value })
+                }
+                disabled={!products.length}
+              >
+                {products.length === 0 ? (
+                  <option value="">Add a product first</option>
+                ) : null}
+                {products.map((product) => (
+                  <option key={product._id} value={product._id}>
+                    {product.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="field">
+              <span>Quantity purchased</span>
+              <input
+                type="number"
+                min="0"
+                step="0.5"
+                value={purchaseForm.quantity}
+                onChange={(e) =>
+                  setPurchaseForm({ ...purchaseForm, quantity: e.target.value })
+                }
+                required
+              />
+            </label>
+
+            <label className="field">
+              <span>Purchase cost</span>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={purchaseForm.cost}
+                onChange={(e) =>
+                  setPurchaseForm({ ...purchaseForm, cost: e.target.value })
+                }
+                required
+              />
+            </label>
+
+            <label className="field">
+              <span>Amount paid</span>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={purchaseForm.amountPaid}
+                onChange={(e) =>
+                  setPurchaseForm({ ...purchaseForm, amountPaid: e.target.value })
+                }
+              />
+            </label>
+
+            <label className="field">
+              <span>Supplier</span>
+              <input
+                value={purchaseForm.supplierName}
+                onChange={(e) =>
+                  setPurchaseForm({ ...purchaseForm, supplierName: e.target.value })
+                }
+                placeholder="Vendor name"
+              />
+            </label>
+
+            <label className="field field-full">
+              <span>Notes</span>
+              <input
+                value={purchaseForm.notes}
+                onChange={(e) =>
+                  setPurchaseForm({ ...purchaseForm, notes: e.target.value })
+                }
+                placeholder="Pending payment, weekly bill"
+              />
+            </label>
+
+            <button
+              className="primary-button field-full"
+              type="submit"
+              disabled={submittingPurchase || !products.length}
+            >
+              {submittingPurchase ? "Saving..." : "Save purchase"}
+            </button>
+          </form>
+        </article>
+      </section>
+
+      <section className="panel-card">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Supplier dues</p>
+            <h3>Unpaid purchases</h3>
+          </div>
+          <span className="pill">{unpaidPurchases.length} pending</span>
+        </div>
+
+        {!unpaidPurchases.length ? (
+          <div className="empty-state">
+            <h4>No unpaid purchases</h4>
+          </div>
+        ) : (
+          <div className="stock-watch-list">
+            {unpaidPurchases.map((purchase) => (
+              <div key={purchase._id} className="stock-watch-row">
+                <div className="stock-watch-main">
+                  <div>
+                    <h4>{purchase.product?.name || "Product"}</h4>
+                    <p>{purchase.supplierName || "Supplier not added"}</p>
+                  </div>
+                  <strong className="stock-watch-value">
+                    {purchase.product?.unit ? `${purchase.quantity} ${purchase.product.unit}` : purchase.quantity}
+                  </strong>
+                </div>
+
+                <div className="customer-stats">
+                  <div>
+                    <span>Cost</span>
+                    <strong>{formatCurrency(purchase.cost)}</strong>
+                  </div>
+                  <div>
+                    <span>Paid</span>
+                    <strong>{formatCurrency(purchase.amountPaid)}</strong>
+                  </div>
+                  <div>
+                    <span>Pending</span>
+                    <strong>{formatCurrency(purchase.pendingAmount)}</strong>
+                  </div>
+                </div>
+                {purchase.payments?.length ? (
+                  <div className="purchase-history">
+                    <span>Payments</span>
+                    <div className="chip-list">
+                      {purchase.payments.slice().reverse().map((payment, index) => (
+                        <span
+                          key={`${purchase._id}-payment-${index}`}
+                          className="expense-chip static-chip"
+                        >
+                          {formatCurrency(payment.amount)}
+                          {payment.method ? ` ${payment.method}` : ""}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="panel-card">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Stock watch</p>
+            <h3>Current inventory</h3>
+          </div>
+          <span className="pill">{products.length} items</span>
+        </div>
+
+        {loading ? <p className="feedback">Loading inventory...</p> : null}
+
+        {!loading && products.length === 0 ? (
+          <div className="empty-state">
+            <h4>No products yet</h4>
+          </div>
+        ) : null}
+
+        <div className="stock-watch-list">
+          {products.map((product) => {
+            const stock = Number(product.stock) || 0;
+            const isLow = stock <= 5;
+            const levelWidth = Math.max(8, Math.min(100, stock * 10));
+            const isEditing = editingProductId === product._id;
+
+            return (
+              <div key={product._id} className="stock-watch-row">
+                <div className="stock-watch-main">
+                  <div>
+                    {isEditing ? (
+                      <div className="inline-edit-grid">
+                        <input
+                          value={editForm.name}
+                          onChange={(e) =>
+                            setEditForm({ ...editForm, name: e.target.value })
+                          }
+                          placeholder="Product name"
+                        />
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={editForm.sellingPrice}
+                          onChange={(e) =>
+                            setEditForm({
+                              ...editForm,
+                              sellingPrice: e.target.value,
+                            })
+                          }
+                          placeholder="Selling price"
+                        />
+                      </div>
+                    ) : (
+                      <>
+                        <h4>{product.name}</h4>
+                        <p>
+                          {product.unit} | Sell {formatCurrency(product.sellingPrice)}
+                        </p>
+                      </>
+                    )}
+                  </div>
+
+                  <strong className="stock-watch-value">
+                    {stock} {product.unit}
+                  </strong>
+                </div>
+
+                <div className="stock-watch-meter" aria-hidden="true">
+                  <div
+                    className={isLow ? "stock-watch-fill low" : "stock-watch-fill"}
+                    style={{ width: `${levelWidth}%` }}
+                  />
+                </div>
+
+                <div className="stock-watch-meta">
+                  <span className={isLow ? "pill pill-amber" : "pill pill-green"}>
+                    {isLow ? "Low" : "OK"}
+                  </span>
+                  <div className="action-row">
+                    {isEditing ? (
+                      <>
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          disabled={savingProductId === product._id}
+                          onClick={() => handleUpdateProduct(product._id)}
+                        >
+                          {savingProductId === product._id ? "Saving..." : "Save"}
+                        </button>
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          onClick={() => setEditingProductId("")}
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          onClick={() => startEditingProduct(product)}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          className="secondary-button danger-button"
+                          type="button"
+                          disabled={deletingProductId === product._id}
+                          onClick={() => handleDeleteProduct(product._id)}
+                        >
+                          {deletingProductId === product._id ? "Deleting..." : "Delete"}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+export default Products;
