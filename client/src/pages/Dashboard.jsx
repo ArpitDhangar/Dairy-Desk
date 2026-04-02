@@ -15,10 +15,12 @@ function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [successToast, setSuccessToast] = useState("");
   const [form, setForm] = useState({
     milkPurchased: 0,
     purchaseCost: 0,
     expenseEntries: [],
+    closingEntries: [],
   });
   const [expenseDraft, setExpenseDraft] = useState({
     label: "",
@@ -35,6 +37,7 @@ function Dashboard() {
         milkPurchased: res.data.milkPurchased || 0,
         purchaseCost: res.data.purchaseCost || 0,
         expenseEntries: res.data.expenseEntries || [],
+        closingEntries: res.data.closingEntries || [],
       });
     } catch (err) {
       setError("Could not load the daily summary.");
@@ -48,14 +51,28 @@ function Dashboard() {
     fetchSummary();
   }, []);
 
+  useEffect(() => {
+    if (!successToast) {
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setSuccessToast("");
+    }, 5000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [successToast]);
+
   const handleSave = async () => {
     try {
       setSaving(true);
       setError("");
+      setSuccessToast("");
       await API.post("/summary", {
         date: today,
         ...form,
       });
+      setSuccessToast("Daily summary saved successfully.");
       fetchSummary();
     } catch (err) {
       setError("Daily summary could not be saved.");
@@ -93,9 +110,41 @@ function Dashboard() {
     (sum, entry) => sum + (Number(entry.amount) || 0),
     0
   );
+  const computedInventorySales = form.closingEntries.reduce(
+    (sum, entry) =>
+      sum +
+      Math.max(
+        (Number(entry.startingQuantity) || 0) - (Number(entry.remainingQuantity) || 0),
+        0
+      ) *
+        (Number(entry.unitPrice) || 0),
+    0
+  );
+  const computedInventoryCost = form.closingEntries.reduce(
+    (sum, entry) =>
+      sum +
+      Math.max(
+        (Number(entry.startingQuantity) || 0) - (Number(entry.remainingQuantity) || 0),
+        0
+      ) *
+        (Number(entry.unitCost) || 0),
+    0
+  );
+  const baseLedgerSales = Math.max(
+    (Number(summary?.totalSales) || 0) - (Number(summary?.inventorySales) || 0),
+    0
+  );
+  const displayTotalSales = baseLedgerSales + computedInventorySales;
+  const displayOtherExpenses =
+    form.expenseEntries.length || !summary ? totalOtherExpenses : Number(summary?.otherExpenses) || 0;
+  const displayPurchaseCost = Number(summary?.purchaseCost) || 0;
+  const displayProfit =
+    displayTotalSales - computedInventoryCost - displayPurchaseCost - displayOtherExpenses;
 
   return (
     <div className="page-stack">
+      {successToast ? <p className="feedback success update-toast">{successToast}</p> : null}
+
       <section className="hero-card dashboard-hero">
         <div>
           <p className="eyebrow">Owner dashboard</p>
@@ -110,7 +159,7 @@ function Dashboard() {
       <section className="stats-row">
         <div className="metric-card accent-blue">
           <span>Total sales</span>
-          <strong>{formatCurrency(summary?.totalSales)}</strong>
+          <strong>{formatCurrency(displayTotalSales)}</strong>
         </div>
         <div className="metric-card accent-green">
           <span>Total collection</span>
@@ -118,7 +167,7 @@ function Dashboard() {
         </div>
         <div className="metric-card accent-amber">
           <span>Net profit</span>
-          <strong>{formatCurrency(summary?.profit)}</strong>
+          <strong>{formatCurrency(displayProfit)}</strong>
         </div>
         <div className="metric-card accent-blue">
           <span>Outstanding balance</span>
@@ -139,38 +188,15 @@ function Dashboard() {
           <div className="section-heading">
             <div>
               <p className="eyebrow">Inputs</p>
-              <h3>Purchase and expense log</h3>
+              <h3>Expense log</h3>
             </div>
             <span className="pill">Editable today</span>
           </div>
 
           <div className="form-grid">
-            <label className="field">
-              <span>Milk purchased</span>
-              <input
-                type="number"
-                min="0"
-                step="0.5"
-                placeholder="0"
-                value={form.milkPurchased}
-                onChange={(e) =>
-                  setForm({ ...form, milkPurchased: Number(e.target.value) })
-                }
-              />
-            </label>
-
-            <label className="field">
-              <span>Purchase cost</span>
-              <input
-                type="number"
-                min="0"
-                step="1"
-                placeholder="0"
-                value={form.purchaseCost}
-                onChange={(e) =>
-                  setForm({ ...form, purchaseCost: Number(e.target.value) })
-                }
-              />
+            <label className="field field-full">
+              <span>Date</span>
+              <input type="date" value={today} readOnly />
             </label>
 
             <label className="field field-full">
@@ -199,7 +225,7 @@ function Dashboard() {
             </label>
 
             <button
-              className="secondary-button"
+              className="secondary-button dashboard-add-expense-button"
               type="button"
               onClick={handleAddExpense}
             >
@@ -253,15 +279,23 @@ function Dashboard() {
             </div>
             <div className="summary-row">
               <span>Purchase cost</span>
-              <strong>{formatCurrency(summary?.purchaseCost)}</strong>
+              <strong>{formatCurrency(displayPurchaseCost)}</strong>
+            </div>
+            <div className="summary-row">
+              <span>Inventory sales</span>
+              <strong>{formatCurrency(computedInventorySales)}</strong>
+            </div>
+            <div className="summary-row">
+              <span>Inventory cost</span>
+              <strong>{formatCurrency(computedInventoryCost)}</strong>
             </div>
             <div className="summary-row">
               <span>Other expenses</span>
-              <strong>{formatCurrency(totalOtherExpenses || summary?.otherExpenses)}</strong>
+              <strong>{formatCurrency(displayOtherExpenses)}</strong>
             </div>
             <div className="summary-row">
               <span>Total sales</span>
-              <strong>{formatCurrency(summary?.totalSales)}</strong>
+              <strong>{formatCurrency(displayTotalSales)}</strong>
             </div>
             <div className="summary-row">
               <span>Total collection</span>
@@ -273,13 +307,83 @@ function Dashboard() {
             </div>
             <div className="summary-row summary-total">
               <span>Profit after costs</span>
-              <strong>{formatCurrency(summary?.profit)}</strong>
+              <strong>{formatCurrency(displayProfit)}</strong>
             </div>
           </div>
         </article>
       </section>
 
       <section className="dashboard-detail-grid">
+        <article className="panel-card">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Closing Stock</p>
+              <h3>Remaining quantity for today</h3>
+            </div>
+            <span className="pill">
+              {form.closingEntries.length || 0} products
+            </span>
+          </div>
+
+          {!form.closingEntries.length ? (
+            <div className="empty-state">
+              <h4>No inventory products to close today</h4>
+            </div>
+          ) : (
+            <div className="stock-watch-list">
+              {form.closingEntries.map((entry, index) => {
+                const startingQuantity = Number(entry.startingQuantity) || 0;
+                const remainingQuantity = Number(entry.remainingQuantity) || 0;
+                const soldQuantity = Math.max(startingQuantity - remainingQuantity, 0);
+                const saleAmount = soldQuantity * (Number(entry.unitPrice) || 0);
+
+                return (
+                  <div key={entry.productId || `${entry.productName}-${index}`} className="stock-watch-row">
+                    <div className="stock-watch-main">
+                      <div>
+                        <h4>{entry.productName}</h4>
+                        <p>
+                          Start {startingQuantity} {entry.unit} | Sold {soldQuantity} {entry.unit}
+                        </p>
+                      </div>
+                      <strong className="stock-watch-value">{formatCurrency(saleAmount)}</strong>
+                    </div>
+
+                    <div className="customer-stats">
+                      <div>
+                        <span>Opening</span>
+                        <strong>
+                          {startingQuantity} {entry.unit}
+                        </strong>
+                      </div>
+                      <div>
+                        <span>Remaining</span>
+                        <input
+                          className="closing-stock-input"
+                          type="number"
+                          min="0"
+                          step="0.5"
+                          value={entry.remainingQuantity}
+                          onChange={(e) =>
+                            setForm((current) => ({
+                              ...current,
+                              closingEntries: current.closingEntries.map((item, itemIndex) =>
+                                itemIndex === index
+                                  ? { ...item, remainingQuantity: e.target.value }
+                                  : item
+                              ),
+                            }))
+                          }
+                        />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </article>
+
         <article className="panel-card">
           <div className="section-heading">
             <div>
@@ -343,144 +447,6 @@ function Dashboard() {
           </div>
         </article>
 
-        <article className="panel-card">
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">Collections</p>
-              <h3>Customers needing follow-up</h3>
-            </div>
-            <Link to="/" className="pill action-pill">
-              Open customers
-            </Link>
-          </div>
-
-          {!summary?.topDueCustomers?.length ? (
-            <div className="empty-state">
-              <h4>No pending dues</h4>
-            </div>
-          ) : (
-            <div className="card-list compact-list">
-              {summary.topDueCustomers.map((customer) => (
-                <Link
-                  key={customer._id}
-                  to={`/customer/${customer._id}`}
-                  className="customer-card"
-                >
-                  <div className="customer-card-top">
-                    <div>
-                      <h4>{customer.name}</h4>
-                      <p>{customer.phone}</p>
-                    </div>
-                    <span className="pill">
-                      {customer.paymentType}
-                    </span>
-                  </div>
-                  <div className="customer-stats single-stat-row">
-                    <div>
-                      <span>Pending amount</span>
-                      <strong>{formatCurrency(customer.balance)}</strong>
-                    </div>
-                  </div>
-                </Link>
-              ))}
-            </div>
-          )}
-        </article>
-
-        <article className="panel-card">
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">Purchases</p>
-              <h3>Supplier payment dues</h3>
-            </div>
-            <Link to="/products" className="pill action-pill">
-              Open inventory
-            </Link>
-          </div>
-
-          {!summary?.recentPurchases?.length ? (
-            <div className="empty-state">
-              <h4>No purchases yet</h4>
-            </div>
-          ) : (
-            <div className="card-list compact-list">
-              {summary.recentPurchases.map((purchase) => (
-                <div key={purchase._id} className="customer-card inventory-card">
-                  <div className="customer-card-top">
-                    <div>
-                      <h4>{purchase.productName}</h4>
-                      <p>{purchase.supplierName || formatDate(purchase.date)}</p>
-                    </div>
-                    <span
-                      className={
-                        purchase.pendingAmount > 0 ? "pill pill-amber" : "pill pill-green"
-                      }
-                    >
-                      {purchase.pendingAmount > 0 ? "Unpaid" : "Paid"}
-                    </span>
-                  </div>
-                  <div className="customer-stats">
-                    <div>
-                      <span>Cost</span>
-                      <strong>{formatCurrency(purchase.cost)}</strong>
-                    </div>
-                    <div>
-                      <span>Paid</span>
-                      <strong>{formatCurrency(purchase.amountPaid)}</strong>
-                    </div>
-                    <div>
-                      <span>Pending</span>
-                      <strong>{formatCurrency(purchase.pendingAmount)}</strong>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </article>
-
-        <article className="panel-card">
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">Activity</p>
-              <h3>Recent ledger movements</h3>
-            </div>
-            <span className="pill">{summary?.recentActivity?.length || 0} updates</span>
-          </div>
-
-          {!summary?.recentActivity?.length ? (
-            <div className="empty-state">
-              <h4>No ledger activity yet</h4>
-            </div>
-          ) : (
-            <div className="ledger-list">
-              {summary.recentActivity.map((entry) => (
-                <div key={entry._id} className="ledger-item">
-                  <div className="ledger-icon">
-                    {entry.type === "debit" ? "DR" : "CR"}
-                  </div>
-                  <div className="ledger-copy">
-                    <div className="ledger-headline">
-                      <strong>{entry.customerName}</strong>
-                      <span
-                        className={
-                          entry.type === "debit"
-                            ? "amount-negative"
-                            : "amount-positive"
-                        }
-                      >
-                        {entry.type === "debit" ? "+" : "-"}
-                        {formatCurrency(entry.amount)}
-                      </span>
-                    </div>
-                    <p>{entry.description || "Ledger entry"}</p>
-                    <p>{formatDateTime(entry.date)}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </article>
       </section>
     </div>
   );

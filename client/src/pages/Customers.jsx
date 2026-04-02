@@ -31,6 +31,7 @@ function Customers() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [successToast, setSuccessToast] = useState("");
   const [form, setForm] = useState(initialForm);
   const [showAddCustomer, setShowAddCustomer] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -56,6 +57,18 @@ function Customers() {
   useEffect(() => {
     fetchCustomers();
   }, []);
+
+  useEffect(() => {
+    if (!successToast) {
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setSuccessToast("");
+    }, 5000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [successToast]);
 
   useEffect(() => {
     if (!products.length) {
@@ -84,6 +97,7 @@ function Customers() {
     try {
       setSubmitting(true);
       setError("");
+      setSuccessToast("");
       const payload =
         form.isDeliveryCustomer === false
           ? {
@@ -104,6 +118,7 @@ function Customers() {
         fixedProducts: defaultProduct ? [createFixedProductDraft(defaultProduct)] : [],
       });
       setShowAddCustomer(false);
+      setSuccessToast("Customer added successfully.");
       fetchCustomers();
     } catch (err) {
       setError("Customer could not be added.");
@@ -274,6 +289,8 @@ function Customers() {
 
   return (
     <div className="page-stack">
+      {successToast ? <p className="feedback success update-toast">{successToast}</p> : null}
+
       <section className="hero-card customer-book-hero">
         <div>
           <p className="eyebrow">Customer book</p>

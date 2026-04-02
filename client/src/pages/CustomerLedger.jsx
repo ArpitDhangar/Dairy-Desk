@@ -50,6 +50,8 @@ function CustomerLedger() {
   const [toDate, setToDate] = useState(today);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [customerUpdateToast, setCustomerUpdateToast] = useState("");
+  const [successToast, setSuccessToast] = useState("");
   const [editingEntryId, setEditingEntryId] = useState("");
   const [editingEntryForm, setEditingEntryForm] = useState({
     description: "",
@@ -57,7 +59,6 @@ function CustomerLedger() {
     quantity: "",
     unitPrice: "",
     amount: "",
-    date: today,
   });
   const [savingEntryId, setSavingEntryId] = useState("");
   const [deletingEntryId, setDeletingEntryId] = useState("");
@@ -142,6 +143,30 @@ function CustomerLedger() {
     fetchLedger();
   }, [id]);
 
+  useEffect(() => {
+    if (!customerUpdateToast) {
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setCustomerUpdateToast("");
+    }, 5000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [customerUpdateToast]);
+
+  useEffect(() => {
+    if (!successToast) {
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setSuccessToast("");
+    }, 5000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [successToast]);
+
   const handleProductChange = (selectedProductId) => {
     const selectedProduct = products.find((product) => product._id === selectedProductId);
 
@@ -219,6 +244,7 @@ function CustomerLedger() {
       setSavingCustomer(true);
       setError("");
       setNotice("");
+      setCustomerUpdateToast("");
 
       const payload =
         customerForm.isDeliveryCustomer === false
@@ -257,7 +283,7 @@ function CustomerLedger() {
       setBalance(res.data.balance || 0);
       setCustomerForm(buildCustomerForm(res.data, products));
       setEditingCustomer(false);
-      setNotice("Customer updated successfully.");
+      setCustomerUpdateToast("Customer updated successfully.");
     } catch (err) {
       setError(err?.response?.data?.message || "Customer could not be updated.");
       console.error(err);
@@ -354,8 +380,9 @@ function CustomerLedger() {
       setCreatingScheduled(true);
       setError("");
       setNotice("");
+      setSuccessToast("");
       const res = await API.post(`/ledger/${id}/scheduled`);
-      setNotice(
+      setSuccessToast(
         res.data.createdCount
           ? `${res.data.createdCount} fixed entr${
               res.data.createdCount === 1 ? "y was" : "ies were"
@@ -379,7 +406,6 @@ function CustomerLedger() {
       quantity: entry.quantity ? String(entry.quantity) : "",
       unitPrice: entry.unitPrice ? String(entry.unitPrice) : "",
       amount: String(entry.amount || ""),
-      date: new Date(entry.date).toISOString().split("T")[0],
     });
   };
 
@@ -400,6 +426,7 @@ function CustomerLedger() {
       setSavingEntryId(entry._id);
       setError("");
       setNotice("");
+      setSuccessToast("");
       await API.put(`/ledger/entry/${entry._id}`, {
         type: entry.type,
         amount: computedAmount,
@@ -407,10 +434,10 @@ function CustomerLedger() {
         productName: editingEntryForm.productName,
         quantity: normalizedQuantity,
         unitPrice: normalizedUnitPrice,
-        date: editingEntryForm.date,
+        date: entry.date,
       });
       setEditingEntryId("");
-      setNotice("Entry updated successfully.");
+      setSuccessToast("Entry updated successfully.");
       fetchLedger();
     } catch (err) {
       setError(err?.response?.data?.message || "Entry could not be updated.");
@@ -425,11 +452,12 @@ function CustomerLedger() {
       setDeletingEntryId(entryId);
       setError("");
       setNotice("");
+      setSuccessToast("");
       await API.delete(`/ledger/entry/${entryId}`);
       if (editingEntryId === entryId) {
         setEditingEntryId("");
       }
-      setNotice("Entry deleted successfully.");
+      setSuccessToast("Entry deleted successfully.");
       fetchLedger();
     } catch (err) {
       setError(err?.response?.data?.message || "Entry could not be deleted.");
@@ -533,6 +561,11 @@ function CustomerLedger() {
 
   return (
     <div className="page-stack">
+      {customerUpdateToast ? (
+        <p className="feedback success update-toast">{customerUpdateToast}</p>
+      ) : null}
+      {successToast ? <p className="feedback success update-toast">{successToast}</p> : null}
+
       <section className="page-header">
         <div>
           <Link to="/" className="ghost-link">
@@ -1163,7 +1196,6 @@ function CustomerLedger() {
           </div>
 
           {error ? <p className="feedback error">{error}</p> : null}
-          {notice ? <p className="feedback success">{notice}</p> : null}
         </article>
 
         <article className="panel-card">
@@ -1203,16 +1235,6 @@ function CustomerLedger() {
                         </span>
                       </div>
                       <input
-                        type="date"
-                        value={editingEntryForm.date}
-                        onChange={(e) =>
-                          setEditingEntryForm({
-                            ...editingEntryForm,
-                            date: e.target.value,
-                          })
-                        }
-                      />
-                      <input
                         value={editingEntryForm.description}
                         onChange={(e) =>
                           setEditingEntryForm({
@@ -1223,7 +1245,7 @@ function CustomerLedger() {
                         placeholder="Description"
                       />
                       {entry.type === "debit" ? (
-                        <>
+                        <div className="ledger-edit-grid">
                           <input
                             value={editingEntryForm.productName}
                             onChange={(e) =>
@@ -1256,13 +1278,14 @@ function CustomerLedger() {
                               setEditingEntryForm({
                                 ...editingEntryForm,
                                 unitPrice: e.target.value,
-                              })
-                            }
-                            placeholder="Rate"
-                          />
-                        </>
+                            })
+                          }
+                          placeholder="Rate"
+                        />
+                        </div>
                       ) : null}
                       <input
+                        className="ledger-edit-amount"
                         type="number"
                         min="0"
                         step="1"
@@ -1275,7 +1298,7 @@ function CustomerLedger() {
                         }
                         placeholder="Amount"
                       />
-                      <div className="action-row">
+                      <div className="action-row ledger-edit-actions">
                         <button
                           className="secondary-button"
                           type="button"

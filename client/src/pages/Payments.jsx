@@ -6,8 +6,14 @@ const initialVendorPaymentForm = {
   supplierName: "",
   purchaseId: "",
   amount: "",
-  method: "",
+  settledAmount: "",
+  method: "Cash",
   note: "",
+};
+
+const initialBillFilters = {
+  supplierName: "",
+  productName: "",
 };
 
 function Payments() {
@@ -16,7 +22,9 @@ function Payments() {
   const [submittingVendorPayment, setSubmittingVendorPayment] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [successToast, setSuccessToast] = useState("");
   const [vendorPaymentForm, setVendorPaymentForm] = useState(initialVendorPaymentForm);
+  const [billFilters, setBillFilters] = useState(initialBillFilters);
 
   const fetchPurchases = async () => {
     try {
@@ -36,6 +44,18 @@ function Payments() {
     fetchPurchases();
   }, []);
 
+  useEffect(() => {
+    if (!successToast) {
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setSuccessToast("");
+    }, 5000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [successToast]);
+
   const unpaidPurchases = purchases.filter(
     (purchase) => Number(purchase.pendingAmount) > 0
   );
@@ -48,6 +68,14 @@ function Payments() {
     ),
   ].sort((a, b) => a.localeCompare(b));
 
+  const products = [
+    ...new Set(
+      unpaidPurchases
+        .map((purchase) => purchase.product?.name?.trim())
+        .filter(Boolean)
+    ),
+  ].sort((a, b) => a.localeCompare(b));
+
   const filteredVendorPurchases = unpaidPurchases.filter((purchase) => {
     if (!vendorPaymentForm.supplierName) {
       return true;
@@ -56,19 +84,42 @@ function Payments() {
     return purchase.supplierName === vendorPaymentForm.supplierName;
   });
 
-  const totalPurchaseDue = unpaidPurchases.reduce(
+  const filteredUnpaidPurchases = unpaidPurchases.filter((purchase) => {
+    const matchesSupplier = billFilters.supplierName
+      ? purchase.supplierName === billFilters.supplierName
+      : true;
+    const matchesProduct = billFilters.productName
+      ? purchase.product?.name === billFilters.productName
+      : true;
+
+    return matchesSupplier && matchesProduct;
+  });
+
+  const filteredPurchaseDue = filteredUnpaidPurchases.reduce(
     (sum, purchase) => sum + (Number(purchase.pendingAmount) || 0),
     0
   );
 
+  const filteredSuppliers = [
+    ...new Set(
+      filteredUnpaidPurchases
+        .map((purchase) => purchase.supplierName?.trim())
+        .filter(Boolean)
+    ),
+  ];
+
   useEffect(() => {
     if (!filteredVendorPurchases.length) {
-      if (vendorPaymentForm.purchaseId) {
+      if (vendorPaymentForm.purchaseId !== "") {
         setVendorPaymentForm((current) => ({
           ...current,
           purchaseId: "",
         }));
       }
+      return;
+    }
+
+    if (vendorPaymentForm.supplierName && vendorPaymentForm.purchaseId === "") {
       return;
     }
 
@@ -90,8 +141,13 @@ function Payments() {
   const handleVendorPayment = async (e) => {
     e.preventDefault();
 
-    if (!vendorPaymentForm.purchaseId) {
-      setError("Choose a purchase to pay.");
+    if (!filteredVendorPurchases.length) {
+      setError("Choose a pending vendor or product to pay.");
+      return;
+    }
+
+    if (!vendorPaymentForm.purchaseId && !vendorPaymentForm.supplierName) {
+      setError("Choose a vendor or select a specific product.");
       return;
     }
 
@@ -99,19 +155,32 @@ function Payments() {
       setSubmittingVendorPayment(true);
       setError("");
       setNotice("");
-      await API.post(
-        `/products/purchase/${vendorPaymentForm.purchaseId}/payment`,
-        {
-          amount: Number(vendorPaymentForm.amount) || 0,
-          method: vendorPaymentForm.method,
-          note: vendorPaymentForm.note,
-        }
-      );
+      setSuccessToast("");
+      const paymentPayload = {
+        amount: Number(vendorPaymentForm.amount) || 0,
+        settledAmount: Number(vendorPaymentForm.settledAmount) || 0,
+        method: vendorPaymentForm.method,
+        note: vendorPaymentForm.note,
+      };
+
+      if (vendorPaymentForm.purchaseId) {
+        await API.post(
+          `/products/purchase/${vendorPaymentForm.purchaseId}/payment`,
+          paymentPayload
+        );
+      } else {
+        await API.post("/products/purchases/payment", {
+          purchaseIds: filteredVendorPurchases.map((purchase) => purchase._id),
+          supplierName: vendorPaymentForm.supplierName,
+          ...paymentPayload,
+        });
+      }
       setVendorPaymentForm((current) => ({
         ...initialVendorPaymentForm,
         supplierName: current.supplierName,
+        purchaseId: "",
       }));
-      setNotice("Vendor payment saved successfully.");
+      setSuccessToast("Vendor payment saved successfully.");
       fetchPurchases();
     } catch (err) {
       setError(err?.response?.data?.message || "Vendor payment could not be saved.");
@@ -123,6 +192,8 @@ function Payments() {
 
   return (
     <div className="page-stack">
+      {successToast ? <p className="feedback success update-toast">{successToast}</p> : null}
+
       <section className="hero-card">
         <div>
           <p className="eyebrow">Payments</p>
@@ -132,24 +203,22 @@ function Payments() {
         <div className="hero-metrics">
           <div className="metric-card accent-amber">
             <span>Total due</span>
-            <strong>{formatCurrency(totalPurchaseDue)}</strong>
+            <strong>{formatCurrency(filteredPurchaseDue)}</strong>
           </div>
           <div className="metric-card accent-blue">
             <span>Pending bills</span>
-            <strong>{unpaidPurchases.length}</strong>
+            <strong>{filteredUnpaidPurchases.length}</strong>
           </div>
           <div className="metric-card accent-green">
             <span>Vendors</span>
-            <strong>{suppliers.length}</strong>
+            <strong>{filteredSuppliers.length}</strong>
           </div>
         </div>
       </section>
 
       {error ? <p className="feedback error">{error}</p> : null}
-      {notice ? <p className="feedback success">{notice}</p> : null}
-
       <section className="content-grid">
-        <article className="panel-card">
+        <article className="panel-card payment-vendor-panel">
           <div className="section-heading">
             <div>
               <p className="eyebrow">Vendor payment</p>
@@ -158,7 +227,7 @@ function Payments() {
             <span className="pill">{suppliers.length} vendors</span>
           </div>
 
-          <form className="form-grid" onSubmit={handleVendorPayment}>
+          <form className="form-grid payment-vendor-form" onSubmit={handleVendorPayment}>
             <label className="field">
               <span>Vendor</span>
               <select
@@ -174,8 +243,9 @@ function Payments() {
 
                     setVendorPaymentForm({
                       supplierName: selectedSupplier,
-                      purchaseId: matchingPurchases[0]?._id || "",
+                      purchaseId: "",
                       amount: "",
+                      settledAmount: "",
                       method: vendorPaymentForm.method,
                       note: vendorPaymentForm.note,
                     });
@@ -208,7 +278,9 @@ function Payments() {
               >
                 <option value="">
                   {filteredVendorPurchases.length
-                    ? "Choose pending purchase"
+                    ? vendorPaymentForm.supplierName
+                      ? "All products"
+                      : "Select product"
                     : "No pending purchase"}
                 </option>
                 {filteredVendorPurchases.map((purchase) => (
@@ -233,7 +305,23 @@ function Payments() {
                     amount: e.target.value,
                   })
                 }
-                required
+              />
+            </label>
+
+            <label className="field">
+              <span>Settle amount</span>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={vendorPaymentForm.settledAmount}
+                onChange={(e) =>
+                  setVendorPaymentForm({
+                    ...vendorPaymentForm,
+                    settledAmount: e.target.value,
+                  })
+                }
+                placeholder="Optional discount or adjustment"
               />
             </label>
 
@@ -275,25 +363,67 @@ function Payments() {
           </form>
         </article>
 
-        <article className="panel-card">
+        <article className="panel-card payment-bills-panel">
           <div className="section-heading">
             <div>
               <p className="eyebrow">Pending bills</p>
               <h3>Unpaid purchases</h3>
             </div>
-            <span className="pill">{unpaidPurchases.length} pending</span>
+            <span className="pill">{filteredUnpaidPurchases.length} pending</span>
+          </div>
+
+          <div className="ledger-filter-stack payment-filter-stack">
+            <label className="field ledger-filter-control">
+              <span>Vendor</span>
+              <select
+                value={billFilters.supplierName}
+                onChange={(e) =>
+                  setBillFilters((current) => ({
+                    ...current,
+                    supplierName: e.target.value,
+                  }))
+                }
+              >
+                <option value="">All vendors</option>
+                {suppliers.map((supplier) => (
+                  <option key={supplier} value={supplier}>
+                    {supplier}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="field ledger-filter-control">
+              <span>Product</span>
+              <select
+                value={billFilters.productName}
+                onChange={(e) =>
+                  setBillFilters((current) => ({
+                    ...current,
+                    productName: e.target.value,
+                  }))
+                }
+              >
+                <option value="">All products</option>
+                {products.map((product) => (
+                  <option key={product} value={product}>
+                    {product}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
 
           {loading ? <p className="feedback">Loading payments...</p> : null}
 
-          {!loading && !unpaidPurchases.length ? (
+          {!loading && !filteredUnpaidPurchases.length ? (
             <div className="empty-state">
-              <h4>No unpaid purchases</h4>
+              <h4>{unpaidPurchases.length ? "No matching purchases" : "No unpaid purchases"}</h4>
             </div>
           ) : (
-            <div className="stock-watch-list">
-              {unpaidPurchases.map((purchase) => (
-                <div key={purchase._id} className="stock-watch-row">
+            <div className="stock-watch-list supplier-due-list">
+              {filteredUnpaidPurchases.map((purchase) => (
+                <div key={purchase._id} className="stock-watch-row supplier-due-row">
                   <div className="stock-watch-main">
                     <div>
                       <h4>{purchase.product?.name || "Product"}</h4>

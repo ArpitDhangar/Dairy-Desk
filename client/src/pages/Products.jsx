@@ -18,6 +18,10 @@ const initialPurchaseForm = {
   notes: "",
 };
 
+function normalizeLabel(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
 function Products() {
   const [products, setProducts] = useState([]);
   const [purchases, setPurchases] = useState([]);
@@ -28,6 +32,7 @@ function Products() {
   const [deletingProductId, setDeletingProductId] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [updateToast, setUpdateToast] = useState("");
   const [productForm, setProductForm] = useState(initialProductForm);
   const [purchaseForm, setPurchaseForm] = useState(initialPurchaseForm);
   const [editingProductId, setEditingProductId] = useState("");
@@ -62,6 +67,64 @@ function Products() {
     fetchProducts();
   }, []);
 
+  useEffect(() => {
+    if (!updateToast) {
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setUpdateToast("");
+    }, 5000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [updateToast]);
+
+  useEffect(() => {
+    const supplierName = purchaseForm.supplierName.trim();
+
+    if (!purchaseForm.product || !supplierName) {
+      return;
+    }
+
+    const latestMatchingPurchase = purchases.find((purchase) => {
+      const purchaseProductId =
+        typeof purchase.product === "object" ? purchase.product?._id : purchase.product;
+
+      return (
+        String(purchaseProductId || "") === String(purchaseForm.product) &&
+        normalizeLabel(purchase.supplierName) === normalizeLabel(supplierName)
+      );
+    });
+
+    if (!latestMatchingPurchase) {
+      return;
+    }
+
+    const latestUnitCost = String(
+      Number(
+        latestMatchingPurchase.unitCost ??
+          (Number(latestMatchingPurchase.quantity) > 0
+            ? Number(latestMatchingPurchase.cost) / Number(latestMatchingPurchase.quantity)
+            : 0)
+      ) || 0
+    );
+
+    setPurchaseForm((current) => {
+      if (
+        current.product !== purchaseForm.product ||
+        current.supplierName.trim() !== supplierName ||
+        current.cost === latestUnitCost
+      ) {
+        return current;
+      }
+
+      return {
+        ...current,
+        cost: latestUnitCost,
+      };
+    });
+  }, [purchaseForm.product, purchaseForm.supplierName, purchases]);
+
   const handleAddProduct = async (e) => {
     e.preventDefault();
 
@@ -69,13 +132,14 @@ function Products() {
       setSubmittingProduct(true);
       setError("");
       setNotice("");
+      setUpdateToast("");
       await API.post("/products", {
         ...productForm,
         stock: Number(productForm.stock) || 0,
         sellingPrice: Number(productForm.sellingPrice) || 0,
       });
       setProductForm(initialProductForm);
-      setNotice("Product added successfully.");
+      setUpdateToast("Product added successfully.");
       fetchProducts();
     } catch (err) {
       setError("Product could not be added.");
@@ -93,23 +157,29 @@ function Products() {
       return;
     }
 
+    if (!purchaseForm.supplierName.trim()) {
+      setError("Enter a vendor name before saving stock.");
+      return;
+    }
+
     try {
       setSubmittingPurchase(true);
       setError("");
       setNotice("");
+      setUpdateToast("");
       await API.post("/products/purchase", {
         product: purchaseForm.product,
         quantity: Number(purchaseForm.quantity) || 0,
-        cost: Number(purchaseForm.cost) || 0,
+        unitCost: Number(purchaseForm.cost) || 0,
         amountPaid: Number(purchaseForm.amountPaid) || 0,
-        supplierName: purchaseForm.supplierName,
+        supplierName: purchaseForm.supplierName.trim(),
         notes: purchaseForm.notes,
       });
       setPurchaseForm((current) => ({
         ...initialPurchaseForm,
         product: current.product,
       }));
-      setNotice("Stock purchase saved successfully.");
+      setUpdateToast("Stock purchase saved successfully.");
       fetchProducts();
     } catch (err) {
       setError("Stock purchase could not be saved.");
@@ -132,12 +202,13 @@ function Products() {
       setSavingProductId(productId);
       setError("");
       setNotice("");
+      setUpdateToast("");
       await API.put(`/products/${productId}`, {
         name: editForm.name,
         sellingPrice: Number(editForm.sellingPrice) || 0,
       });
       setEditingProductId("");
-      setNotice("Product updated successfully.");
+      setUpdateToast("Product updated successfully.");
       fetchProducts();
     } catch (err) {
       setError(err?.response?.data?.message || "Product could not be updated.");
@@ -152,11 +223,12 @@ function Products() {
       setDeletingProductId(productId);
       setError("");
       setNotice("");
+      setUpdateToast("");
       await API.delete(`/products/${productId}`);
       if (editingProductId === productId) {
         setEditingProductId("");
       }
-      setNotice("Product deleted successfully.");
+      setUpdateToast("Product deleted successfully.");
       fetchProducts();
     } catch (err) {
       setError(err?.response?.data?.message || "Product could not be deleted.");
@@ -178,9 +250,21 @@ function Products() {
   const unpaidPurchases = purchases.filter(
     (purchase) => Number(purchase.pendingAmount) > 0
   );
+  const selectedPurchaseProduct = products.find(
+    (product) => String(product._id) === String(purchaseForm.product)
+  );
+  const vendors = [
+    ...new Set(
+      purchases
+        .map((purchase) => purchase.supplierName?.trim())
+        .filter(Boolean)
+    ),
+  ].sort((a, b) => a.localeCompare(b));
 
   return (
     <div className="page-stack">
+      {updateToast ? <p className="feedback success update-toast">{updateToast}</p> : null}
+
       <section className="hero-card">
         <div>
           <p className="eyebrow">Inventory</p>
@@ -204,10 +288,8 @@ function Products() {
       </section>
 
       {error ? <p className="feedback error">{error}</p> : null}
-      {notice ? <p className="feedback success">{notice}</p> : null}
-
       <section className="content-grid">
-        <article className="panel-card">
+        <article className="panel-card catalog-panel">
           <div className="section-heading">
             <div>
               <p className="eyebrow">Catalog</p>
@@ -216,7 +298,7 @@ function Products() {
             <span className="pill">Owner setup</span>
           </div>
 
-          <form className="form-grid" onSubmit={handleAddProduct}>
+          <form className="form-grid catalog-form-grid" onSubmit={handleAddProduct}>
             <label className="field">
               <span>Product name</span>
               <input
@@ -288,16 +370,15 @@ function Products() {
           </form>
         </article>
 
-        <article className="panel-card">
+        <article className="panel-card purchase-panel">
           <div className="section-heading">
             <div>
               <p className="eyebrow">Purchases</p>
-              <h3>Update stock after buying</h3>
             </div>
             <span className="pill pill-green">Stock inflow</span>
           </div>
 
-          <form className="form-grid" onSubmit={handleAddPurchase}>
+          <form className="form-grid purchase-form-grid" onSubmit={handleAddPurchase}>
             <label className="field field-full">
               <span>Product</span>
               <select
@@ -333,7 +414,10 @@ function Products() {
             </label>
 
             <label className="field">
-              <span>Purchase cost</span>
+              <span>
+                Purchase price
+                {selectedPurchaseProduct?.unit ? ` (per ${selectedPurchaseProduct.unit})` : ""}
+              </span>
               <input
                 type="number"
                 min="0"
@@ -362,12 +446,19 @@ function Products() {
             <label className="field">
               <span>Supplier</span>
               <input
+                list="purchase-vendors"
                 value={purchaseForm.supplierName}
                 onChange={(e) =>
                   setPurchaseForm({ ...purchaseForm, supplierName: e.target.value })
                 }
                 placeholder="Vendor name"
+                required
               />
+              <datalist id="purchase-vendors">
+                {vendors.map((vendor) => (
+                  <option key={vendor} value={vendor} />
+                ))}
+              </datalist>
             </label>
 
             <label className="field field-full">
@@ -406,9 +497,9 @@ function Products() {
             <h4>No unpaid purchases</h4>
           </div>
         ) : (
-          <div className="stock-watch-list">
+          <div className="stock-watch-list supplier-due-list">
             {unpaidPurchases.map((purchase) => (
-              <div key={purchase._id} className="stock-watch-row">
+              <div key={purchase._id} className="stock-watch-row supplier-due-row">
                 <div className="stock-watch-main">
                   <div>
                     <h4>{purchase.product?.name || "Product"}</h4>
@@ -480,7 +571,7 @@ function Products() {
             const isEditing = editingProductId === product._id;
 
             return (
-              <div key={product._id} className="stock-watch-row">
+              <div key={product._id} className="stock-watch-row inventory-stock-row">
                 <div className="stock-watch-main">
                   <div>
                     {isEditing ? (
