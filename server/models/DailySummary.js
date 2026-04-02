@@ -33,6 +33,59 @@ const dailySummarySchema = new mongoose.Schema(
         },
       },
     ],
+    closingEntries: [
+      {
+        productId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Product",
+          required: true,
+        },
+        productName: {
+          type: String,
+          required: true,
+          trim: true,
+        },
+        unit: {
+          type: String,
+          default: "unit",
+        },
+        startingQuantity: {
+          type: Number,
+          default: 0,
+          min: 0,
+        },
+        remainingQuantity: {
+          type: Number,
+          default: 0,
+          min: 0,
+        },
+        soldQuantity: {
+          type: Number,
+          default: 0,
+          min: 0,
+        },
+        unitPrice: {
+          type: Number,
+          default: 0,
+          min: 0,
+        },
+        unitCost: {
+          type: Number,
+          default: 0,
+          min: 0,
+        },
+        saleAmount: {
+          type: Number,
+          default: 0,
+          min: 0,
+        },
+        costAmount: {
+          type: Number,
+          default: 0,
+          min: 0,
+        },
+      },
+    ],
   },
   { timestamps: true }
 );

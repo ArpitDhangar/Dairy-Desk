@@ -15,6 +15,11 @@ const productPurchaseSchema = new mongoose.Schema(
       type: Number,
       required: true,
     },
+    unitCost: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     amountPaid: {
       type: Number,
       default: 0,

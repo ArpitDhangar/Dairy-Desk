@@ -8,6 +8,7 @@ const {
   addPurchase,
   getPurchases,
   addPurchasePayment,
+  addBulkPurchasePayment,
 } = require("../controllers/product.controller");
 
 router.post("/", addProduct);
@@ -16,6 +17,7 @@ router.put("/:productId", updateProduct);
 router.delete("/:productId", deleteProduct);
 router.get("/purchases", getPurchases);
 router.post("/purchase", addPurchase);
+router.post("/purchases/payment", addBulkPurchasePayment);
 router.post("/purchase/:purchaseId/payment", addPurchasePayment);
 
 module.exports = router;

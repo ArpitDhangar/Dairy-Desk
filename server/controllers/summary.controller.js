@@ -47,6 +47,7 @@ exports.createOrUpdateSummary = async (req, res) => {
       purchaseCost,
       otherExpenses,
       expenseEntries,
+      closingEntries,
     } = req.body;
     const normalizedExpenseEntries = Array.isArray(expenseEntries)
       ? expenseEntries
@@ -59,6 +60,78 @@ exports.createOrUpdateSummary = async (req, res) => {
     const computedOtherExpenses = normalizedExpenseEntries.length
       ? normalizedExpenseEntries.reduce((sum, entry) => sum + entry.amount, 0)
       : Number(otherExpenses) || 0;
+    const existingSummary = await DailySummary.findOne({ date });
+    const existingClosingMap = new Map(
+      Array.isArray(existingSummary?.closingEntries)
+        ? existingSummary.closingEntries.map((entry) => [String(entry.productId), entry])
+        : []
+    );
+    const normalizedClosingEntries = Array.isArray(closingEntries)
+      ? closingEntries
+          .map((entry) => ({
+            productId: String(entry?.productId || "").trim(),
+            remainingQuantity: Number(entry?.remainingQuantity) || 0,
+          }))
+          .filter((entry) => entry.productId)
+      : [];
+    const submittedProductIds = [...new Set(normalizedClosingEntries.map((entry) => entry.productId))];
+    const products = submittedProductIds.length
+      ? await Product.find({ _id: { $in: submittedProductIds } })
+      : [];
+    const productMap = new Map(products.map((product) => [String(product._id), product]));
+    const latestPurchases = submittedProductIds.length
+      ? await ProductPurchase.find({ product: { $in: submittedProductIds } }).sort({
+          date: -1,
+          createdAt: -1,
+        })
+      : [];
+    const latestUnitCostMap = new Map();
+
+    latestPurchases.forEach((purchase) => {
+      const productId = String(purchase.product);
+      if (!latestUnitCostMap.has(productId)) {
+        const quantity = Number(purchase.quantity) || 0;
+        const fallbackUnitCost = quantity > 0 ? (Number(purchase.cost) || 0) / quantity : 0;
+        latestUnitCostMap.set(productId, Number(purchase.unitCost) || fallbackUnitCost || 0);
+      }
+    });
+
+    const computedClosingEntries = [];
+
+    for (const entry of normalizedClosingEntries) {
+      const product = productMap.get(entry.productId);
+
+      if (!product) {
+        continue;
+      }
+
+      const previousEntry = existingClosingMap.get(entry.productId);
+      const startingQuantity = previousEntry
+        ? Number(previousEntry.startingQuantity) || 0
+        : Number(product.stock) || 0;
+      const remainingQuantity = Number(entry.remainingQuantity) || 0;
+      const soldQuantity = Math.max(startingQuantity - remainingQuantity, 0);
+      const unitPrice = Number(product.sellingPrice) || 0;
+      const unitCost = Number(latestUnitCostMap.get(entry.productId)) || 0;
+      const saleAmount = Number((soldQuantity * unitPrice).toFixed(2));
+      const costAmount = Number((soldQuantity * unitCost).toFixed(2));
+
+      product.stock = remainingQuantity;
+      await product.save();
+
+      computedClosingEntries.push({
+        productId: product._id,
+        productName: product.name,
+        unit: product.unit || "unit",
+        startingQuantity,
+        remainingQuantity,
+        soldQuantity,
+        unitPrice,
+        unitCost,
+        saleAmount,
+        costAmount,
+      });
+    }
 
     const summary = await DailySummary.findOneAndUpdate(
       { date },
@@ -67,6 +140,7 @@ exports.createOrUpdateSummary = async (req, res) => {
         purchaseCost,
         otherExpenses: computedOtherExpenses,
         expenseEntries: normalizedExpenseEntries,
+        closingEntries: computedClosingEntries,
       },
       { new: true, upsert: true }
     );
@@ -96,8 +170,7 @@ exports.getDailySummary = async (req, res) => {
           .limit(6),
         ProductPurchase.find()
           .populate("product", "name unit")
-          .sort({ date: -1, createdAt: -1 })
-          .limit(8),
+          .sort({ date: -1, createdAt: -1 }),
       ]);
 
     let totalSales = 0;
@@ -112,8 +185,63 @@ exports.getDailySummary = async (req, res) => {
       }
     });
 
+    const closingEntryMap = new Map(
+      Array.isArray(summary?.closingEntries)
+        ? summary.closingEntries.map((entry) => [String(entry.productId), entry])
+        : []
+    );
+    const latestUnitCostMap = new Map();
+
+    purchases.forEach((purchase) => {
+      const productId = String(purchase.product?._id || purchase.product || "");
+      if (productId && !latestUnitCostMap.has(productId)) {
+        const quantity = Number(purchase.quantity) || 0;
+        const fallbackUnitCost = quantity > 0 ? (Number(purchase.cost) || 0) / quantity : 0;
+        latestUnitCostMap.set(productId, Number(purchase.unitCost) || fallbackUnitCost || 0);
+      }
+    });
+
+    const closingEntries = products
+      .filter(
+        (product) =>
+          Number(product.stock) > 0 || closingEntryMap.has(String(product._id))
+      )
+      .map((product) => {
+        const savedEntry = closingEntryMap.get(String(product._id));
+
+        if (savedEntry) {
+          return savedEntry;
+        }
+
+        const startingQuantity = Number(product.stock) || 0;
+
+        return {
+          productId: product._id,
+          productName: product.name,
+          unit: product.unit || "unit",
+          startingQuantity,
+          remainingQuantity: startingQuantity,
+          soldQuantity: 0,
+          unitPrice: Number(product.sellingPrice) || 0,
+          unitCost: Number(latestUnitCostMap.get(String(product._id))) || 0,
+          saleAmount: 0,
+          costAmount: 0,
+        };
+      });
+    const inventorySales = closingEntries.reduce(
+      (sum, entry) => sum + (Number(entry.saleAmount) || 0),
+      0
+    );
+    const inventoryCost = closingEntries.reduce(
+      (sum, entry) => sum + (Number(entry.costAmount) || 0),
+      0
+    );
+
+    totalSales += inventorySales;
+
     const profit =
       totalSales -
+      inventoryCost -
       (summary?.purchaseCost || 0) -
       (summary?.otherExpenses || 0);
 
@@ -197,6 +325,9 @@ exports.getDailySummary = async (req, res) => {
       lowStockProducts,
       productCount: products.length,
       expenseEntries: summary?.expenseEntries || [],
+      closingEntries,
+      inventorySales,
+      inventoryCost,
       topDueCustomers: customersWithBalance.slice(0, 5).map((customer) => ({
         _id: customer._id,
         name: customer.name,
