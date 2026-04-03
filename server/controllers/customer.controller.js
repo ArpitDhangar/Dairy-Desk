@@ -144,6 +144,7 @@ exports.addCustomer = async (req, res) => {
     if (payload.isDeliveryCustomer !== false) {
       payload.deliveryPlans = [buildDeliveryPlan(req.body)];
     }
+    payload.owner = req.user.id;
     const customer = await Customer.create(payload);
     res.status(201).json(customer);
   } catch (error) {
@@ -154,7 +155,7 @@ exports.addCustomer = async (req, res) => {
 // Get All Customers
 exports.getCustomers = async (req, res) => {
   try {
-    const customers = await Customer.find().sort({ createdAt: -1 });
+    const customers = await Customer.find({ owner: req.user.id }).sort({ createdAt: -1 });
     res.json(customers);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -164,7 +165,7 @@ exports.getCustomers = async (req, res) => {
 // Update Customer
 exports.updateCustomer = async (req, res) => {
   try {
-    const existingCustomer = await Customer.findById(req.params.id);
+    const existingCustomer = await Customer.findOne({ _id: req.params.id, owner: req.user.id });
 
     if (!existingCustomer) {
       return res.status(404).json({ message: "Customer not found" });

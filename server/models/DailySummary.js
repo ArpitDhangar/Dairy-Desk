@@ -5,7 +5,12 @@ const dailySummarySchema = new mongoose.Schema(
     date: {
       type: Date,
       required: true,
-      unique: true,
+    },
+    owner: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      index: true,
     },
     milkPurchased: {
       type: Number,
@@ -89,5 +94,8 @@ const dailySummarySchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+// Each owner can only have one summary per date
+dailySummarySchema.index({ date: 1, owner: 1 }, { unique: true });
 
 module.exports = mongoose.model("DailySummary", dailySummarySchema);

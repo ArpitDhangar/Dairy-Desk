@@ -19,6 +19,12 @@ const productSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+    owner: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      index: true,
+    },
   },
   { timestamps: true }
 );

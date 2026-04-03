@@ -101,6 +101,12 @@ const customerSchema = new mongoose.Schema(
         },
       },
     ],
+    owner: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      index: true,
+    },
     deliveryPlans: [
       {
         effectiveFrom: {

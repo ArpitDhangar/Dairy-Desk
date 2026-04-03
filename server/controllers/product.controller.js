@@ -19,7 +19,7 @@ function normalizePurchase(purchase) {
 // Add Product
 exports.addProduct = async (req, res) => {
   try {
-    const product = await Product.create(req.body);
+    const product = await Product.create({ ...req.body, owner: req.user.id });
     res.json(product);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -30,12 +30,9 @@ exports.updateProduct = async (req, res) => {
   try {
     const { name, sellingPrice } = req.body;
 
-    const product = await Product.findByIdAndUpdate(
-      req.params.productId,
-      {
-        name,
-        sellingPrice: Number(sellingPrice) || 0,
-      },
+    const product = await Product.findOneAndUpdate(
+      { _id: req.params.productId, owner: req.user.id },
+      { name, sellingPrice: Number(sellingPrice) || 0 },
       { new: true, runValidators: true }
     );
 
@@ -53,6 +50,7 @@ exports.deleteProduct = async (req, res) => {
   try {
     const purchaseExists = await ProductPurchase.exists({
       product: req.params.productId,
+      owner: req.user.id,
     });
 
     if (purchaseExists) {
@@ -61,7 +59,7 @@ exports.deleteProduct = async (req, res) => {
       });
     }
 
-    const product = await Product.findByIdAndDelete(req.params.productId);
+    const product = await Product.findOneAndDelete({ _id: req.params.productId, owner: req.user.id });
 
     if (!product) {
       return res.status(404).json({ message: "Product not found" });
@@ -76,7 +74,7 @@ exports.deleteProduct = async (req, res) => {
 // Get Products
 exports.getProducts = async (req, res) => {
   try {
-    const products = await Product.find();
+    const products = await Product.find({ owner: req.user.id });
     res.json(products);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -85,7 +83,7 @@ exports.getProducts = async (req, res) => {
 
 exports.getPurchases = async (req, res) => {
   try {
-    const purchases = await ProductPurchase.find()
+    const purchases = await ProductPurchase.find({ owner: req.user.id })
       .populate("product", "name unit")
       .sort({ date: -1, createdAt: -1 });
 
@@ -113,6 +111,7 @@ exports.addPurchase = async (req, res) => {
 
     const purchase = await ProductPurchase.create({
       product,
+      owner: req.user.id,
       quantity: normalizedQuantity,
       cost: normalizedCost,
       unitCost: normalizedUnitCost,
@@ -132,9 +131,11 @@ exports.addPurchase = async (req, res) => {
           : [],
     });
 
-    const productData = await Product.findById(product);
-    productData.stock += normalizedQuantity;
-    await productData.save();
+    const productData = await Product.findOne({ _id: product, owner: req.user.id });
+    if (productData) {
+      productData.stock += normalizedQuantity;
+      await productData.save();
+    }
 
     res.json(normalizePurchase(purchase));
   } catch (error) {
@@ -145,10 +146,10 @@ exports.addPurchase = async (req, res) => {
 exports.addPurchasePayment = async (req, res) => {
   try {
     const { amount, settledAmount, method, note, date } = req.body;
-    const purchase = await ProductPurchase.findById(req.params.purchaseId).populate(
-      "product",
-      "name unit"
-    );
+    const purchase = await ProductPurchase.findOne({
+      _id: req.params.purchaseId,
+      owner: req.user.id,
+    }).populate("product", "name unit");
 
     if (!purchase) {
       return res.status(404).json({ message: "Purchase not found" });
@@ -221,6 +222,7 @@ exports.addBulkPurchasePayment = async (req, res) => {
 
     const purchases = await ProductPurchase.find({
       _id: { $in: purchaseIds },
+      owner: req.user.id,
     })
       .populate("product", "name unit")
       .sort({ date: 1, createdAt: 1 });

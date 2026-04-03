@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import API from "../services/api";
-import { formatCurrency } from "../utils/formatters";
+import { formatCurrency, formatDate } from "../utils/formatters";
 
 const initialProductForm = {
   name: "",
@@ -23,11 +23,16 @@ function normalizeLabel(value) {
 }
 
 function Products() {
+  const today = new Date().toISOString().split("T")[0];
+
   const [products, setProducts] = useState([]);
   const [purchases, setPurchases] = useState([]);
+  const [todaySummary, setTodaySummary] = useState(null);
+  const [closingEntries, setClosingEntries] = useState([]);
   const [loading, setLoading] = useState(true);
   const [submittingProduct, setSubmittingProduct] = useState(false);
   const [submittingPurchase, setSubmittingPurchase] = useState(false);
+  const [savingClosing, setSavingClosing] = useState(false);
   const [savingProductId, setSavingProductId] = useState("");
   const [deletingProductId, setDeletingProductId] = useState("");
   const [error, setError] = useState("");
@@ -36,21 +41,22 @@ function Products() {
   const [productForm, setProductForm] = useState(initialProductForm);
   const [purchaseForm, setPurchaseForm] = useState(initialPurchaseForm);
   const [editingProductId, setEditingProductId] = useState("");
-  const [editForm, setEditForm] = useState({
-    name: "",
-    sellingPrice: "",
-  });
+  const [editForm, setEditForm] = useState({ name: "", sellingPrice: "" });
+  const [dateFilter, setDateFilter] = useState("");
 
-  const fetchProducts = async () => {
+  const fetchAll = async () => {
     try {
       setLoading(true);
       setError("");
-      const [productsRes, purchasesRes] = await Promise.all([
+      const [productsRes, purchasesRes, summaryRes] = await Promise.all([
         API.get("/products"),
         API.get("/products/purchases"),
+        API.get(`/summary/${today}`),
       ]);
       setProducts(productsRes.data);
       setPurchases(purchasesRes.data);
+      setTodaySummary(summaryRes.data);
+      setClosingEntries(summaryRes.data.closingEntries || []);
       setPurchaseForm((current) => ({
         ...current,
         product: current.product || productsRes.data[0]?._id || "",
@@ -64,41 +70,31 @@ function Products() {
   };
 
   useEffect(() => {
-    fetchProducts();
+    fetchAll();
   }, []);
 
   useEffect(() => {
     if (!updateToast) {
       return undefined;
     }
-
-    const timeoutId = window.setTimeout(() => {
-      setUpdateToast("");
-    }, 5000);
-
+    const timeoutId = window.setTimeout(() => setUpdateToast(""), 5000);
     return () => window.clearTimeout(timeoutId);
   }, [updateToast]);
 
   useEffect(() => {
     const supplierName = purchaseForm.supplierName.trim();
-
-    if (!purchaseForm.product || !supplierName) {
-      return;
-    }
+    if (!purchaseForm.product || !supplierName) return;
 
     const latestMatchingPurchase = purchases.find((purchase) => {
       const purchaseProductId =
         typeof purchase.product === "object" ? purchase.product?._id : purchase.product;
-
       return (
         String(purchaseProductId || "") === String(purchaseForm.product) &&
         normalizeLabel(purchase.supplierName) === normalizeLabel(supplierName)
       );
     });
 
-    if (!latestMatchingPurchase) {
-      return;
-    }
+    if (!latestMatchingPurchase) return;
 
     const latestUnitCost = String(
       Number(
@@ -117,17 +113,12 @@ function Products() {
       ) {
         return current;
       }
-
-      return {
-        ...current,
-        cost: latestUnitCost,
-      };
+      return { ...current, cost: latestUnitCost };
     });
   }, [purchaseForm.product, purchaseForm.supplierName, purchases]);
 
   const handleAddProduct = async (e) => {
     e.preventDefault();
-
     try {
       setSubmittingProduct(true);
       setError("");
@@ -140,7 +131,7 @@ function Products() {
       });
       setProductForm(initialProductForm);
       setUpdateToast("Product added successfully.");
-      fetchProducts();
+      fetchAll();
     } catch (err) {
       setError("Product could not be added.");
       console.error(err);
@@ -151,17 +142,14 @@ function Products() {
 
   const handleAddPurchase = async (e) => {
     e.preventDefault();
-
     if (!purchaseForm.product) {
       setError("Choose a product before saving stock.");
       return;
     }
-
     if (!purchaseForm.supplierName.trim()) {
       setError("Enter a vendor name before saving stock.");
       return;
     }
-
     try {
       setSubmittingPurchase(true);
       setError("");
@@ -180,12 +168,37 @@ function Products() {
         product: current.product,
       }));
       setUpdateToast("Stock purchase saved successfully.");
-      fetchProducts();
+      fetchAll();
     } catch (err) {
       setError("Stock purchase could not be saved.");
       console.error(err);
     } finally {
       setSubmittingPurchase(false);
+    }
+  };
+
+  const handleSaveClosing = async () => {
+    try {
+      setSavingClosing(true);
+      setError("");
+      setUpdateToast("");
+      await API.post("/summary", {
+        date: today,
+        milkPurchased: todaySummary?.milkPurchased || 0,
+        purchaseCost: todaySummary?.purchaseCost || 0,
+        expenseEntries: todaySummary?.expenseEntries || [],
+        closingEntries: closingEntries.map((e) => ({
+          productId: e.productId,
+          remainingQuantity: e.remainingQuantity,
+        })),
+      });
+      setUpdateToast("Closing stock saved successfully.");
+      fetchAll();
+    } catch (err) {
+      setError("Closing stock could not be saved.");
+      console.error(err);
+    } finally {
+      setSavingClosing(false);
     }
   };
 
@@ -209,7 +222,7 @@ function Products() {
       });
       setEditingProductId("");
       setUpdateToast("Product updated successfully.");
-      fetchProducts();
+      fetchAll();
     } catch (err) {
       setError(err?.response?.data?.message || "Product could not be updated.");
       console.error(err);
@@ -225,11 +238,9 @@ function Products() {
       setNotice("");
       setUpdateToast("");
       await API.delete(`/products/${productId}`);
-      if (editingProductId === productId) {
-        setEditingProductId("");
-      }
+      if (editingProductId === productId) setEditingProductId("");
       setUpdateToast("Product deleted successfully.");
-      fetchProducts();
+      fetchAll();
     } catch (err) {
       setError(err?.response?.data?.message || "Product could not be deleted.");
       console.error(err);
@@ -238,28 +249,30 @@ function Products() {
     }
   };
 
-  const lowStockProducts = products.filter((product) => Number(product.stock) <= 5);
-  const totalStock = products.reduce(
-    (sum, product) => sum + (Number(product.stock) || 0),
-    0
-  );
-  const totalPurchaseDue = purchases.reduce(
-    (sum, purchase) => sum + (Number(purchase.pendingAmount) || 0),
-    0
-  );
-  const unpaidPurchases = purchases.filter(
-    (purchase) => Number(purchase.pendingAmount) > 0
-  );
+  const lowStockProducts = products.filter((p) => Number(p.stock) <= 5);
+  const totalStock = products.reduce((sum, p) => sum + (Number(p.stock) || 0), 0);
+  const totalPurchaseDue = purchases.reduce((sum, p) => sum + (Number(p.pendingAmount) || 0), 0);
+  const unpaidPurchases = purchases.filter((p) => Number(p.pendingAmount) > 0);
   const selectedPurchaseProduct = products.find(
-    (product) => String(product._id) === String(purchaseForm.product)
+    (p) => String(p._id) === String(purchaseForm.product)
   );
   const vendors = [
-    ...new Set(
-      purchases
-        .map((purchase) => purchase.supplierName?.trim())
-        .filter(Boolean)
-    ),
+    ...new Set(purchases.map((p) => p.supplierName?.trim()).filter(Boolean)),
   ].sort((a, b) => a.localeCompare(b));
+
+  const [showAllPurchases, setShowAllPurchases] = useState(false);
+  const PURCHASE_PAGE_SIZE = 4;
+
+  const filteredPurchases = dateFilter
+    ? purchases.filter((p) => {
+        const d = new Date(p.date || p.createdAt);
+        return d.toISOString().split("T")[0] === dateFilter;
+      })
+    : purchases;
+
+  const visiblePurchases = showAllPurchases
+    ? filteredPurchases
+    : filteredPurchases.slice(0, PURCHASE_PAGE_SIZE);
 
   return (
     <div className="page-stack">
@@ -270,7 +283,6 @@ function Products() {
           <p className="eyebrow">Inventory</p>
           <h2>Inventory</h2>
         </div>
-
         <div className="hero-metrics">
           <div className="metric-card accent-blue">
             <span>Total products</span>
@@ -288,6 +300,7 @@ function Products() {
       </section>
 
       {error ? <p className="feedback error">{error}</p> : null}
+
       <section className="content-grid">
         <article className="panel-card catalog-panel">
           <div className="section-heading">
@@ -304,9 +317,7 @@ function Products() {
               <input
                 placeholder="Curd"
                 value={productForm.name}
-                onChange={(e) =>
-                  setProductForm({ ...productForm, name: e.target.value })
-                }
+                onChange={(e) => setProductForm({ ...productForm, name: e.target.value })}
                 required
               />
             </label>
@@ -315,9 +326,7 @@ function Products() {
               <span>Unit</span>
               <select
                 value={productForm.unit}
-                onChange={(e) =>
-                  setProductForm({ ...productForm, unit: e.target.value })
-                }
+                onChange={(e) => setProductForm({ ...productForm, unit: e.target.value })}
               >
                 <option value="liter">Liter</option>
                 <option value="kg">Kilogram</option>
@@ -333,12 +342,7 @@ function Products() {
                 min="0"
                 step="1"
                 value={productForm.sellingPrice}
-                onChange={(e) =>
-                  setProductForm({
-                    ...productForm,
-                    sellingPrice: e.target.value,
-                  })
-                }
+                onChange={(e) => setProductForm({ ...productForm, sellingPrice: e.target.value })}
                 placeholder="0"
                 required
               />
@@ -351,12 +355,7 @@ function Products() {
                 min="0"
                 step="0.5"
                 value={productForm.stock}
-                onChange={(e) =>
-                  setProductForm({
-                    ...productForm,
-                    stock: Number(e.target.value),
-                  })
-                }
+                onChange={(e) => setProductForm({ ...productForm, stock: Number(e.target.value) })}
               />
             </label>
 
@@ -383,18 +382,14 @@ function Products() {
               <span>Product</span>
               <select
                 value={purchaseForm.product}
-                onChange={(e) =>
-                  setPurchaseForm({ ...purchaseForm, product: e.target.value })
-                }
+                onChange={(e) => setPurchaseForm({ ...purchaseForm, product: e.target.value })}
                 disabled={!products.length}
               >
                 {products.length === 0 ? (
                   <option value="">Add a product first</option>
                 ) : null}
-                {products.map((product) => (
-                  <option key={product._id} value={product._id}>
-                    {product.name}
-                  </option>
+                {products.map((p) => (
+                  <option key={p._id} value={p._id}>{p.name}</option>
                 ))}
               </select>
             </label>
@@ -406,9 +401,7 @@ function Products() {
                 min="0"
                 step="0.5"
                 value={purchaseForm.quantity}
-                onChange={(e) =>
-                  setPurchaseForm({ ...purchaseForm, quantity: e.target.value })
-                }
+                onChange={(e) => setPurchaseForm({ ...purchaseForm, quantity: e.target.value })}
                 required
               />
             </label>
@@ -423,9 +416,7 @@ function Products() {
                 min="0"
                 step="1"
                 value={purchaseForm.cost}
-                onChange={(e) =>
-                  setPurchaseForm({ ...purchaseForm, cost: e.target.value })
-                }
+                onChange={(e) => setPurchaseForm({ ...purchaseForm, cost: e.target.value })}
                 required
               />
             </label>
@@ -437,9 +428,7 @@ function Products() {
                 min="0"
                 step="1"
                 value={purchaseForm.amountPaid}
-                onChange={(e) =>
-                  setPurchaseForm({ ...purchaseForm, amountPaid: e.target.value })
-                }
+                onChange={(e) => setPurchaseForm({ ...purchaseForm, amountPaid: e.target.value })}
               />
             </label>
 
@@ -448,16 +437,12 @@ function Products() {
               <input
                 list="purchase-vendors"
                 value={purchaseForm.supplierName}
-                onChange={(e) =>
-                  setPurchaseForm({ ...purchaseForm, supplierName: e.target.value })
-                }
+                onChange={(e) => setPurchaseForm({ ...purchaseForm, supplierName: e.target.value })}
                 placeholder="Vendor name"
                 required
               />
               <datalist id="purchase-vendors">
-                {vendors.map((vendor) => (
-                  <option key={vendor} value={vendor} />
-                ))}
+                {vendors.map((v) => <option key={v} value={v} />)}
               </datalist>
             </label>
 
@@ -465,9 +450,7 @@ function Products() {
               <span>Notes</span>
               <input
                 value={purchaseForm.notes}
-                onChange={(e) =>
-                  setPurchaseForm({ ...purchaseForm, notes: e.target.value })
-                }
+                onChange={(e) => setPurchaseForm({ ...purchaseForm, notes: e.target.value })}
                 placeholder="Pending payment, weekly bill"
               />
             </label>
@@ -483,6 +466,83 @@ function Products() {
         </article>
       </section>
 
+      {/* ── Closing Stock ── */}
+      <section className="panel-card">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">End of day</p>
+            <h3>Closing Stock</h3>
+          </div>
+          <span className="pill">{closingEntries.length} products</span>
+        </div>
+
+        {!closingEntries.length ? (
+          <div className="empty-state">
+            <h4>No inventory products to close today</h4>
+          </div>
+        ) : (
+          <>
+            <div className="stock-watch-list">
+              {closingEntries.map((entry, index) => {
+                const startingQuantity = Number(entry.startingQuantity) || 0;
+                const remainingQuantity = Number(entry.remainingQuantity) || 0;
+                const soldQuantity = Math.max(startingQuantity - remainingQuantity, 0);
+                const saleAmount = soldQuantity * (Number(entry.unitPrice) || 0);
+
+                return (
+                  <div key={entry.productId || `${entry.productName}-${index}`} className="stock-watch-row">
+                    <div className="stock-watch-main">
+                      <div>
+                        <h4>{entry.productName}</h4>
+                        <p>
+                          Start {startingQuantity} {entry.unit} · Sold {soldQuantity} {entry.unit}
+                        </p>
+                      </div>
+                      <strong className="stock-watch-value">{formatCurrency(saleAmount)}</strong>
+                    </div>
+
+                    <div className="customer-stats">
+                      <div>
+                        <span>Opening</span>
+                        <strong>{startingQuantity} {entry.unit}</strong>
+                      </div>
+                      <div>
+                        <span>Remaining</span>
+                        <input
+                          className="closing-stock-input"
+                          type="number"
+                          min="0"
+                          step="0.5"
+                          value={entry.remainingQuantity}
+                          onChange={(e) =>
+                            setClosingEntries((prev) =>
+                              prev.map((item, i) =>
+                                i === index ? { ...item, remainingQuantity: e.target.value } : item
+                              )
+                            )
+                          }
+                        />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <button
+              className="primary-button"
+              type="button"
+              disabled={savingClosing}
+              onClick={handleSaveClosing}
+              style={{ marginTop: "16px" }}
+            >
+              {savingClosing ? "Saving..." : "Save closing stock"}
+            </button>
+          </>
+        )}
+      </section>
+
+      {/* ── Supplier dues (unpaid only) ── */}
       <section className="panel-card">
         <div className="section-heading">
           <div>
@@ -499,53 +559,113 @@ function Products() {
         ) : (
           <div className="stock-watch-list supplier-due-list">
             {unpaidPurchases.map((purchase) => (
-              <div key={purchase._id} className="stock-watch-row supplier-due-row">
+              <div key={purchase._id} className="stock-watch-row supplier-due-row purchase-compact-row">
                 <div className="stock-watch-main">
                   <div>
                     <h4>{purchase.product?.name || "Product"}</h4>
                     <p>{purchase.supplierName || "Supplier not added"}</p>
                   </div>
-                  <strong className="stock-watch-value">
-                    {purchase.product?.unit ? `${purchase.quantity} ${purchase.product.unit}` : purchase.quantity}
-                  </strong>
+                  <div className="purchase-row-right">
+                    <strong className="stock-watch-value">
+                      {purchase.product?.unit
+                        ? `${purchase.quantity} ${purchase.product.unit}`
+                        : purchase.quantity}
+                    </strong>
+                    <span className="purchase-date-badge">
+                      {formatDate(purchase.date || purchase.createdAt)}
+                    </span>
+                  </div>
                 </div>
-
                 <div className="customer-stats">
-                  <div>
-                    <span>Cost</span>
-                    <strong>{formatCurrency(purchase.cost)}</strong>
-                  </div>
-                  <div>
-                    <span>Paid</span>
-                    <strong>{formatCurrency(purchase.amountPaid)}</strong>
-                  </div>
-                  <div>
-                    <span>Pending</span>
-                    <strong>{formatCurrency(purchase.pendingAmount)}</strong>
-                  </div>
+                  <div><span>Cost</span><strong>{formatCurrency(purchase.cost)}</strong></div>
+                  <div><span>Paid</span><strong>{formatCurrency(purchase.amountPaid)}</strong></div>
+                  <div><span>Pending</span><strong>{formatCurrency(purchase.pendingAmount)}</strong></div>
                 </div>
-                {purchase.payments?.length ? (
-                  <div className="purchase-history">
-                    <span>Payments</span>
-                    <div className="chip-list">
-                      {purchase.payments.slice().reverse().map((payment, index) => (
-                        <span
-                          key={`${purchase._id}-payment-${index}`}
-                          className="expense-chip static-chip"
-                        >
-                          {formatCurrency(payment.amount)}
-                          {payment.method ? ` ${payment.method}` : ""}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
               </div>
             ))}
           </div>
         )}
       </section>
 
+      {/* ── Purchase History ── */}
+      <section className="panel-card">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Stock purchases</p>
+            <h3>Purchase history</h3>
+          </div>
+          <span className="pill">{filteredPurchases.length} records</span>
+        </div>
+
+        <div className="purchase-filter-row">
+          <label className="field purchase-date-field">
+            <span>Filter by date</span>
+            <input
+              type="date"
+              value={dateFilter}
+              onChange={(e) => { setDateFilter(e.target.value); setShowAllPurchases(false); }}
+            />
+          </label>
+          {dateFilter ? (
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => { setDateFilter(""); setShowAllPurchases(false); }}
+            >
+              Clear filter
+            </button>
+          ) : null}
+        </div>
+
+        {!filteredPurchases.length ? (
+          <div className="empty-state">
+            <h4>{dateFilter ? "No purchases on this date" : "No purchases yet"}</h4>
+          </div>
+        ) : (
+          <>
+            <div className="stock-watch-list supplier-due-list">
+              {visiblePurchases.map((purchase) => (
+                <div key={purchase._id} className="stock-watch-row supplier-due-row purchase-compact-row">
+                  <div className="stock-watch-main">
+                    <div>
+                      <h4>{purchase.product?.name || "Product"}</h4>
+                      <p>{purchase.supplierName || "Supplier not added"}</p>
+                    </div>
+                    <div className="purchase-row-right">
+                      <strong className="stock-watch-value">
+                        {purchase.product?.unit
+                          ? `${purchase.quantity} ${purchase.product.unit}`
+                          : purchase.quantity}
+                      </strong>
+                      <span className="purchase-date-badge">
+                        {formatDate(purchase.date || purchase.createdAt)}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="customer-stats">
+                    <div><span>Cost</span><strong>{formatCurrency(purchase.cost)}</strong></div>
+                    <div><span>Paid</span><strong>{formatCurrency(purchase.amountPaid)}</strong></div>
+                    <div><span>Pending</span><strong>{formatCurrency(purchase.pendingAmount)}</strong></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {filteredPurchases.length > PURCHASE_PAGE_SIZE ? (
+              <button
+                className="see-more-button"
+                type="button"
+                onClick={() => setShowAllPurchases((v) => !v)}
+              >
+                {showAllPurchases
+                  ? "Show less"
+                  : `Show ${filteredPurchases.length - PURCHASE_PAGE_SIZE} more`}
+              </button>
+            ) : null}
+          </>
+        )}
+      </section>
+
+      {/* ── Current inventory ── */}
       <section className="panel-card">
         <div className="section-heading">
           <div>
@@ -578,9 +698,7 @@ function Products() {
                       <div className="inline-edit-grid">
                         <input
                           value={editForm.name}
-                          onChange={(e) =>
-                            setEditForm({ ...editForm, name: e.target.value })
-                          }
+                          onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
                           placeholder="Product name"
                         />
                         <input
@@ -588,12 +706,7 @@ function Products() {
                           min="0"
                           step="1"
                           value={editForm.sellingPrice}
-                          onChange={(e) =>
-                            setEditForm({
-                              ...editForm,
-                              sellingPrice: e.target.value,
-                            })
-                          }
+                          onChange={(e) => setEditForm({ ...editForm, sellingPrice: e.target.value })}
                           placeholder="Selling price"
                         />
                       </div>

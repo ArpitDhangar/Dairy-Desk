@@ -62,6 +62,12 @@ const productPurchaseSchema = new mongoose.Schema(
       type: Date,
       default: Date.now,
     },
+    owner: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      index: true,
+    },
   },
   { timestamps: true }
 );

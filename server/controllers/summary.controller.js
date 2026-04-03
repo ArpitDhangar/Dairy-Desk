@@ -49,6 +49,9 @@ exports.createOrUpdateSummary = async (req, res) => {
       expenseEntries,
       closingEntries,
     } = req.body;
+
+    const ownerId = req.user.id;
+
     const normalizedExpenseEntries = Array.isArray(expenseEntries)
       ? expenseEntries
           .map((entry) => ({
@@ -60,7 +63,8 @@ exports.createOrUpdateSummary = async (req, res) => {
     const computedOtherExpenses = normalizedExpenseEntries.length
       ? normalizedExpenseEntries.reduce((sum, entry) => sum + entry.amount, 0)
       : Number(otherExpenses) || 0;
-    const existingSummary = await DailySummary.findOne({ date });
+
+    const existingSummary = await DailySummary.findOne({ date, owner: ownerId });
     const existingClosingMap = new Map(
       Array.isArray(existingSummary?.closingEntries)
         ? existingSummary.closingEntries.map((entry) => [String(entry.productId), entry])
@@ -76,11 +80,11 @@ exports.createOrUpdateSummary = async (req, res) => {
       : [];
     const submittedProductIds = [...new Set(normalizedClosingEntries.map((entry) => entry.productId))];
     const products = submittedProductIds.length
-      ? await Product.find({ _id: { $in: submittedProductIds } })
+      ? await Product.find({ _id: { $in: submittedProductIds }, owner: ownerId })
       : [];
     const productMap = new Map(products.map((product) => [String(product._id), product]));
     const latestPurchases = submittedProductIds.length
-      ? await ProductPurchase.find({ product: { $in: submittedProductIds } }).sort({
+      ? await ProductPurchase.find({ product: { $in: submittedProductIds }, owner: ownerId }).sort({
           date: -1,
           createdAt: -1,
         })
@@ -134,8 +138,9 @@ exports.createOrUpdateSummary = async (req, res) => {
     }
 
     const summary = await DailySummary.findOneAndUpdate(
-      { date },
+      { date, owner: ownerId },
       {
+        owner: ownerId,
         milkPurchased,
         purchaseCost,
         otherExpenses: computedOtherExpenses,
@@ -153,22 +158,21 @@ exports.createOrUpdateSummary = async (req, res) => {
 
 exports.getDailySummary = async (req, res) => {
   try {
+    const ownerId = req.user.id;
     const requestedDate = new Date(req.params.date);
     const { start, end } = getDayRange(requestedDate);
 
     const [summary, ledgerEntries, customers, products, recentEntries, purchases] =
       await Promise.all([
-        DailySummary.findOne({ date: start }),
-        Ledger.find({
-          date: { $gte: start, $lte: end },
-        }),
-        Customer.find().sort({ balance: -1 }),
-        Product.find().sort({ stock: 1, name: 1 }),
-        Ledger.find()
+        DailySummary.findOne({ date: start, owner: ownerId }),
+        Ledger.find({ owner: ownerId, date: { $gte: start, $lte: end } }),
+        Customer.find({ owner: ownerId }).sort({ balance: -1 }),
+        Product.find({ owner: ownerId }).sort({ stock: 1, name: 1 }),
+        Ledger.find({ owner: ownerId })
           .populate("customer", "name phone")
           .sort({ date: -1 })
           .limit(6),
-        ProductPurchase.find()
+        ProductPurchase.find({ owner: ownerId })
           .populate("product", "name unit")
           .sort({ date: -1, createdAt: -1 }),
       ]);
@@ -228,6 +232,7 @@ exports.getDailySummary = async (req, res) => {
           costAmount: 0,
         };
       });
+
     const inventorySales = closingEntries.reduce(
       (sum, entry) => sum + (Number(entry.saleAmount) || 0),
       0
@@ -264,14 +269,8 @@ exports.getDailySummary = async (req, res) => {
         sum +
         getActiveFixedProducts(customer, requestedDate).reduce((slotSum, product) => {
           const unit = String(product.unit || "").toLowerCase();
-          if (unit !== "liter" && unit !== "litre" && unit !== "l") {
-            return slotSum;
-          }
-
-          if (!product.morningEnabled) {
-            return slotSum;
-          }
-
+          if (unit !== "liter" && unit !== "litre" && unit !== "l") return slotSum;
+          if (!product.morningEnabled) return slotSum;
           return slotSum + (Number(product.morningQuantity ?? product.defaultQuantity) || 0);
         }, 0)
       );
@@ -281,14 +280,8 @@ exports.getDailySummary = async (req, res) => {
         sum +
         getActiveFixedProducts(customer, requestedDate).reduce((slotSum, product) => {
           const unit = String(product.unit || "").toLowerCase();
-          if (unit !== "liter" && unit !== "litre" && unit !== "l") {
-            return slotSum;
-          }
-
-          if (!product.eveningEnabled) {
-            return slotSum;
-          }
-
+          if (unit !== "liter" && unit !== "litre" && unit !== "l") return slotSum;
+          if (!product.eveningEnabled) return slotSum;
           return slotSum + (Number(product.eveningQuantity) || 0);
         }, 0)
       );
@@ -347,7 +340,6 @@ exports.getDailySummary = async (req, res) => {
       recentPurchases: purchases.map((purchase) => {
         const cost = Number(purchase.cost) || 0;
         const amountPaid = Math.min(Number(purchase.amountPaid) || 0, cost);
-
         return {
           _id: purchase._id,
           productName: purchase.product?.name || "Product",

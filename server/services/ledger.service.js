@@ -8,6 +8,7 @@ function getBalanceImpact(type, amount) {
 
 async function createLedgerEntry({
   customerId,
+  owner,
   type,
   amount,
   description,
@@ -28,6 +29,7 @@ async function createLedgerEntry({
 
   const entry = await Ledger.create({
     customer: customerId,
+    owner: owner || customer.owner,
     type,
     amount: normalizedAmount,
     description,
@@ -46,8 +48,8 @@ async function createLedgerEntry({
   return entry;
 }
 
-async function updateLedgerEntry(entryId, updates) {
-  const entry = await Ledger.findById(entryId);
+async function updateLedgerEntry(entryId, ownerId, updates) {
+  const entry = await Ledger.findOne({ _id: entryId, owner: ownerId });
 
   if (!entry) {
     throw new Error("Ledger entry not found");
@@ -80,8 +82,8 @@ async function updateLedgerEntry(entryId, updates) {
   return entry;
 }
 
-async function deleteLedgerEntry(entryId) {
-  const entry = await Ledger.findById(entryId);
+async function deleteLedgerEntry(entryId, ownerId) {
+  const entry = await Ledger.findOne({ _id: entryId, owner: ownerId });
 
   if (!entry) {
     throw new Error("Ledger entry not found");
@@ -215,6 +217,7 @@ async function createScheduledEntryForCustomer(customer, slot, targetDate = new 
 
     const existingEntry = await Ledger.findOne({
       customer: customer._id,
+      owner: customer.owner,
       entrySource: "scheduled",
       deliverySlot: slot,
       productName: schedule.productName,
@@ -240,6 +243,7 @@ async function createScheduledEntryForCustomer(customer, slot, targetDate = new 
 
     const entry = await createLedgerEntry({
       customerId: customer._id,
+      owner: customer.owner,
       type: "debit",
       amount,
       description: `${productName} - ${slotLabel} (${quantity} ${unitLabel})`,

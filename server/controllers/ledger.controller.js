@@ -66,6 +66,7 @@ exports.addEntry = async (req, res) => {
 
     const entry = await createLedgerEntry({
       customerId: customer,
+      owner: req.user.id,
       type,
       amount,
       description,
@@ -87,6 +88,7 @@ exports.getCustomerLedger = async (req, res) => {
   try {
     const entries = await Ledger.find({
       customer: req.params.customerId,
+      owner: req.user.id,
     }).sort({ date: -1 });
 
     res.json(entries);
@@ -127,7 +129,7 @@ exports.updateEntry = async (req, res) => {
       date,
     } = req.body;
 
-    const entry = await updateLedgerEntry(req.params.entryId, {
+    const entry = await updateLedgerEntry(req.params.entryId, req.user.id, {
       type,
       amount,
       description,
@@ -145,7 +147,7 @@ exports.updateEntry = async (req, res) => {
 
 exports.deleteEntry = async (req, res) => {
   try {
-    await deleteLedgerEntry(req.params.entryId);
+    await deleteLedgerEntry(req.params.entryId, req.user.id);
     res.json({ message: "Ledger entry deleted successfully" });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -154,14 +156,14 @@ exports.deleteEntry = async (req, res) => {
 
 exports.downloadCustomerLedgerPdf = async (req, res) => {
   try {
-    const customer = await Customer.findById(req.params.customerId);
+    const customer = await Customer.findOne({ _id: req.params.customerId, owner: req.user.id });
 
     if (!customer) {
       return res.status(404).json({ message: "Customer not found" });
     }
 
     const { start, end, label } = getDateRangeFromQuery(req.query);
-    const ledgerQuery = { customer: customer._id };
+    const ledgerQuery = { customer: customer._id, owner: req.user.id };
 
     if (start || end) {
       ledgerQuery.date = {};
